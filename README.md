@@ -30,7 +30,7 @@ Install uv: https://docs.astral.sh/uv/
 
 **Step 1 — Authenticate once (interactive 2FA):**
 ```bash
-~/.local/bin/uv run --directory ~/Code/personal-capital-connector personal-capital-connector auth
+uv run --directory {full path to this directory} personal-capital-connector auth
 ```
 Your session is saved to `~/.config/personal-capital-connector/session.json` (chmod 600). Re-run this any time your session expires.
 
@@ -39,11 +39,11 @@ Your session is saved to `~/.config/personal-capital-connector/session.json` (ch
 {
   "mcpServers": {
     "personal-capital": {
-      "command": "{path to local bin}/uv",
+      "command": "{full path to uv}",
       "args": [
         "run",
         "--directory",
-        "/Users/{username}/Code/personal-capital-connector",
+        "{full path to this directory}",
         "personal-capital-connector"
       ]
     }
