@@ -23,6 +23,9 @@ personal-capital-connector/
 | `get_asset_allocation` | "What's my asset allocation in my 401k?" |
 | `check_auth_status` | "Is my Empower session still valid?" |
 
+### Prerequisites
+Install uv: https://docs.astral.sh/uv/
+
 ### To get started
 
 **Step 1 — Authenticate once (interactive 2FA):**
@@ -36,7 +39,7 @@ Your session is saved to `~/.config/personal-capital-connector/session.json` (ch
 {
   "mcpServers": {
     "personal-capital": {
-      "command": "/Users/{username}/.local/bin/uv",
+      "command": "{path to local bin}/uv",
       "args": [
         "run",
         "--directory",
