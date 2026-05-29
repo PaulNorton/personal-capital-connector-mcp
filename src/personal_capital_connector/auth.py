@@ -104,9 +104,20 @@ def interactive_auth(email: str = "") -> PersonalCapital:
             raise ValueError("2FA code is required.")
 
         pc.two_factor_authenticate(mode, code)
-        pc.authenticate_password(password)
+        resp = pc.authenticate_password(password)
+        data = resp.json()
+        if not data.get("spHeader", {}).get("success"):
+            err = data.get("spHeader", {}).get("errors") or data.get("spHeader", {}).get("SP_HEADER_KEY")
+            raise RuntimeError(f"authenticate_password failed: {err}")
         print("✓ 2FA complete")
 
     save_session(pc.get_session(), pc.get_csrf())
     print(f"✓ Session saved to {SESSION_FILE}")
+
+    # Validate the saved session is actually usable
+    validated = create_authenticated_client()
+    if validated is None:
+        clear_session()
+        raise RuntimeError("Session was saved but validation failed — please try again.")
+    print("✓ Session validated successfully")
     return pc

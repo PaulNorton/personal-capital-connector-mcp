@@ -61,16 +61,21 @@ def list_accounts(
         Literal["all", "cash", "credit", "investment", "loan", "other"],
         "Filter by account category. Use 'all' to see everything.",
     ] = "all",
+    hide_zero_balance: Annotated[
+        bool,
+        "Hide accounts with a $0 balance (e.g. old/inactive accounts). Default false.",
+    ] = False,
 ) -> str:
     """
     List all Personal Capital / Empower accounts with current balances.
     Accounts are grouped by type: cash (checking/savings), credit (credit cards),
     investment (brokerage/401k/IRA), loan (mortgage/auto/student), and other.
+    Closed accounts are always excluded. Zero-balance accounts are shown by default.
     Use type_filter to narrow to a specific category.
     """
     api = _get_api()
     data = api.get_accounts()
-    categorized = categorize_accounts(data)
+    categorized = categorize_accounts(data, hide_zero_balance=hide_zero_balance)
     groups = categorized["accounts"]
 
     group_labels = {
@@ -97,9 +102,10 @@ def list_accounts(
             bal = acct["balance"]
             line = f"  • {acct['name']}: ${bal:,.2f}"
 
-            if acct.get("credit_limit"):
-                util = abs(bal) / acct["credit_limit"] * 100
-                line += f" | limit ${acct['credit_limit']:,.0f} ({util:.0f}% used)"
+            credit_limit = acct.get("credit_limit")
+            if credit_limit:
+                util = abs(bal) / credit_limit * 100
+                line += f" | limit ${credit_limit:,.0f} ({util:.0f}% used)"
             if acct.get("available_credit") is not None:
                 line += f" | available ${acct['available_credit']:,.2f}"
             if acct.get("payment_due_date"):
@@ -122,7 +128,7 @@ def get_net_worth() -> str:
     """
     api = _get_api()
     data = api.get_accounts()
-    categorized = categorize_accounts(data)
+    categorized = categorize_accounts(data, hide_zero_balance=False)
     groups = categorized["accounts"]
 
     total_assets = sum(

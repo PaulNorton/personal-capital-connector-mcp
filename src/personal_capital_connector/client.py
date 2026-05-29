@@ -1,8 +1,27 @@
 """Personal Capital API wrapper and data formatting helpers."""
 
+import re
 from datetime import datetime, timedelta
 
 from personalcapital import PersonalCapital
+
+
+def _safe_float(value) -> float | None:
+    """Convert a value to float, returning None if not possible."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_last4(original_name: str | None) -> str | None:
+    """Extract last 4 digits from originalName like '... Ending in 7783'."""
+    if not original_name:
+        return None
+    match = re.search(r'[Ee]nding in\s+(\d{4})\s*$', original_name)
+    return match.group(1) if match else None
 
 
 class PersonalCapitalAPI:
@@ -48,10 +67,12 @@ class PersonalCapitalAPI:
 # Formatting helpers (pure functions — no API calls)
 # ---------------------------------------------------------------------------
 
-def categorize_accounts(accounts_data: dict) -> dict:
+def categorize_accounts(accounts_data: dict, hide_zero_balance: bool = False) -> dict:
     """
     Group accounts from spData into cash / credit / investment / loan / other.
     Returns a dict with 'networth', 'accounts' (grouped), and 'total_accounts'.
+    Accounts with a closedDate are always excluded.
+    Zero-balance accounts are excluded when hide_zero_balance is True (default).
     """
     accounts = accounts_data.get("accounts", [])
     networth = accounts_data.get("networth", 0)
@@ -64,49 +85,75 @@ def categorize_accounts(accounts_data: dict) -> dict:
         "other": [],
     }
 
+    included = 0
     for acct in accounts:
-        grp = acct.get("accountTypeGroup", "").upper()
-        prod = acct.get("productType", "").upper()
+        # Skip closed accounts
+        if acct.get("closedDate"):
+            continue
+
+        balance = _safe_float(acct.get("balance")) or 0.0
+
+        # Skip zero-balance accounts when requested
+        if hide_zero_balance and balance == 0.0:
+            continue
+
+        grp = (acct.get("accountTypeGroup") or "").upper()
+        prod = (acct.get("productType") or "").upper()
+
+        # Build a human-readable name: prefer the user-assigned 'name' field,
+        # fall back to firmName + accountType.
+        display_name = acct.get("name") or ""
+        if not display_name:
+            firm = acct.get("firmName") or ""
+            acct_type = acct.get("accountType") or ""
+            display_name = f"{firm} {acct_type}".strip()
+
+        last4 = _extract_last4(acct.get("originalName"))
+        if last4:
+            display_name = f"{display_name} (…{last4})"
 
         entry = {
-            "name": f"{acct.get('firmName', '')} {acct.get('accountName', '')}".strip(),
+            "name": display_name,
             "firm": acct.get("firmName", ""),
-            "account_name": acct.get("accountName", ""),
             "type": acct.get("accountType", ""),
-            "balance": acct.get("balance", 0),
+            "subtype": acct.get("accountTypeSubtype", ""),
+            "balance": balance,
             "is_asset": acct.get("isAsset", True),
+            "is_manual": acct.get("isManual", False),
             "currency": acct.get("currency", "USD"),
             "last_refreshed": acct.get("lastRefreshed", ""),
             # Credit card fields
-            "credit_limit": acct.get("creditLimit"),
-            "available_credit": acct.get("availableCredit"),
-            "min_payment": acct.get("minPayment"),
+            "credit_limit": _safe_float(acct.get("creditLimit")),
+            "available_credit": _safe_float(acct.get("availableCredit")),
+            "min_payment": _safe_float(acct.get("minPayment")),
             "payment_due_date": acct.get("paymentDueDate"),
             # Loan fields
-            "interest_rate": acct.get("interestRate"),
-            "original_loan_amount": acct.get("originalLoanAmount"),
+            "interest_rate": _safe_float(acct.get("interestRate")),
+            "original_loan_amount": _safe_float(acct.get("originalLoanAmount")),
         }
 
-        if grp == "BANK" or prod in ("CHECKING", "SAVINGS", "CD", "MONEY_MARKET"):
+        if grp == "BANK" or prod in ("BANK", "CHECKING", "SAVINGS", "CD", "MONEY_MARKET"):
             groups["cash"].append(entry)
         elif grp == "CREDIT_CARD" or prod == "CREDIT_CARD":
             groups["credit"].append(entry)
-        elif grp == "INVESTMENT" or prod in (
-            "401K", "IRA", "ROTH_IRA", "BROKERAGE", "529", "SEP_IRA",
+        elif grp in ("RETIREMENT", "INVESTMENT", "EDUCATIONAL", "HEALTH") or prod in (
+            "INVESTMENT", "401K", "IRA", "ROTH_IRA", "BROKERAGE", "529", "SEP_IRA",
             "SIMPLE_IRA", "403B", "PENSION", "ANNUITY", "STOCK_PLAN", "HSA",
         ):
             groups["investment"].append(entry)
-        elif grp == "LOAN" or prod in (
-            "MORTGAGE", "AUTO_LOAN", "STUDENT_LOAN", "HOME_EQUITY", "PERSONAL_LOAN",
+        elif grp in ("LOAN", "MORTGAGE") or prod in (
+            "LOAN", "MORTGAGE", "AUTO_LOAN", "STUDENT_LOAN", "HOME_EQUITY", "PERSONAL_LOAN",
         ):
             groups["loan"].append(entry)
         else:
             groups["other"].append(entry)
 
+        included += 1
+
     return {
         "networth": networth,
         "accounts": groups,
-        "total_accounts": len(accounts),
+        "total_accounts": included,
     }
 
 
