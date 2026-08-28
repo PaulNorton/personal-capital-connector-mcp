@@ -23,6 +23,34 @@ personal-capital-connector/
 | `get_asset_allocation` | "What's my asset allocation in my 401k?" |
 | `check_auth_status` | "Is my Empower session still valid?" |
 
+### `get_transactions` parameters
+
+Query a date range or a lookback window, filter, and page through results.
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `days` | 30 | Lookback from today. Ignored when `start_date` is set. |
+| `start_date` / `end_date` | — | ISO `YYYY-MM-DD`. `start_date` alone runs through today. |
+| `search` | — | Substring match on description, original description, or merchant. Comma-separated terms are ORed: `"avis, hertz, national"`. |
+| `account` | — | Substring of the account name, e.g. `"delta"`. |
+| `category` | — | Substring of the Personal Capital category, e.g. `"travel"`. |
+| `min_amount` / `max_amount` | 0 | Absolute-value bounds. `max_amount=0` means no cap. |
+| `limit` / `offset` | 100 / 0 | Page through results. The header always reports the full match count. |
+| `oldest_first` | false | Sort ascending by date. |
+
+Amounts are signed: **money out is negative, money in is positive.** The header shows the net,
+gross in, and gross out for everything matched — not just the rows on the current page.
+
+```
+Transactions — 2026-03-01 to 2026-03-31
+3 of 271 matched
+Matched total: net $17,746.50  (in $377,693.19 / out $359,946.69)
+
+2026-03-31      5,516.08  Brokeragelink - Contribution  [Amazon 401(k) Plan]  (Retirement Contributions)
+...
+268 more. Re-run with offset=3 to continue.
+```
+
 ### Prerequisites
 Install uv: https://docs.astral.sh/uv/
 

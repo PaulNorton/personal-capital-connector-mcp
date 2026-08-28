@@ -169,60 +169,143 @@ def get_net_worth() -> str:
 
 @mcp.tool()
 def get_transactions(
-    days: Annotated[int, "Number of days to look back (default 30)"] = 30,
+    days: Annotated[
+        int, "Days to look back from today. Ignored when start_date is set. Default 30."
+    ] = 30,
+    start_date: Annotated[
+        str, "Start of an explicit date range, YYYY-MM-DD. Overrides `days`."
+    ] = "",
+    end_date: Annotated[
+        str, "End of an explicit date range, YYYY-MM-DD. Defaults to today."
+    ] = "",
     search: Annotated[
         str,
-        "Filter by description or merchant name (case-insensitive, partial match)",
+        "Match description, original description, or merchant. Case-insensitive "
+        "substring. Comma-separated terms are ORed: 'avis, hertz, national'.",
+    ] = "",
+    account: Annotated[
+        str, "Limit to one account. Case-insensitive substring of the account name."
+    ] = "",
+    category: Annotated[
+        str, "Limit to one Personal Capital category, e.g. 'travel'. Substring match."
     ] = "",
     min_amount: Annotated[
-        float,
-        "Only return transactions with an absolute amount >= this value",
+        float, "Only transactions with absolute amount >= this value."
     ] = 0.0,
+    max_amount: Annotated[
+        float, "Only transactions with absolute amount <= this value. 0 means no cap."
+    ] = 0.0,
+    limit: Annotated[int, "Maximum rows to return. Default 100."] = 100,
+    offset: Annotated[
+        int, "Skip this many rows first. Page through results with limit + offset."
+    ] = 0,
+    oldest_first: Annotated[bool, "Sort oldest first instead of newest first."] = False,
 ) -> str:
     """
-    Fetch recent transactions from all connected accounts.
-    Supports filtering by keyword (merchant/description) and minimum dollar amount.
-    Returns up to 100 transactions sorted most-recent first.
+    Fetch transactions from all connected accounts.
+
+    Query either a date range (start_date/end_date) or a lookback window (days).
+    Filter by keyword, account, category, and amount range. Results are paged with
+    limit and offset, and the header always reports how many matched in total, so
+    truncation is never silent.
+
+    Amounts are signed: money out is negative, money in is positive.
     """
     api = _get_api()
-    txns = api.get_transactions(days=days)
+    txns = api.get_transactions(
+        days=days,
+        start_date=start_date or None,
+        end_date=end_date or None,
+    )
 
-    search_lower = search.lower()
-    if search_lower:
+    terms = [t.strip().lower() for t in search.split(",") if t.strip()]
+    if terms:
         txns = [
             t for t in txns
-            if search_lower in (t.get("description") or "").lower()
-            or search_lower in (t.get("originalDescription") or "").lower()
-            or search_lower in (t.get("merchant") or "").lower()
-            or search_lower in (t.get("accountName") or "").lower()
+            if any(
+                term in (t.get("description") or "").lower()
+                or term in (t.get("originalDescription") or "").lower()
+                or term in (t.get("merchant") or "").lower()
+                for term in terms
+            )
         ]
+
+    if account:
+        needle = account.lower()
+        txns = [t for t in txns if needle in (t.get("accountName") or "").lower()]
+
+    if category:
+        needle = category.lower()
+        txns = [t for t in txns if needle in (t.get("categoryName") or "").lower()]
 
     if min_amount > 0:
         txns = [t for t in txns if abs(t.get("amount", 0)) >= min_amount]
+    if max_amount > 0:
+        txns = [t for t in txns if abs(t.get("amount", 0)) <= max_amount]
 
     if not txns:
-        return f"No transactions found for the past {days} days."
+        return f"No transactions found. ({_range_label(days, start_date, end_date)})"
 
-    txns.sort(key=lambda x: x.get("transactionDate", ""), reverse=True)
+    txns.sort(key=lambda x: x.get("transactionDate", ""), reverse=not oldest_first)
 
-    header = f"Transactions — last {days} days ({len(txns)} found)"
+    matched = len(txns)
+    page = txns[offset:offset + limit] if limit > 0 else txns[offset:]
+
+    money_in = sum(
+        t.get("amount", 0) for t in txns if t.get("isCredit")
+    )
+    money_out = sum(
+        t.get("amount", 0) for t in txns if not t.get("isCredit")
+    )
+
+    header = f"Transactions — {_range_label(days, start_date, end_date)}"
+    lines = [header]
+
+    shown = f"{len(page)} of {matched} matched"
+    if offset:
+        shown += f", starting at {offset}"
+    lines.append(shown)
+    lines.append(
+        f"Matched total: net ${money_in - money_out:,.2f}  "
+        f"(in ${money_in:,.2f} / out ${money_out:,.2f})"
+    )
     if search:
-        header += f' matching "{search}"'
-    lines = [header, ""]
+        lines.append(f'Search: "{search}"')
+    lines.append("")
 
-    for txn in txns[:100]:
+    for txn in page:
         date = (txn.get("transactionDate") or "")[:10]
         desc = txn.get("description") or txn.get("originalDescription") or ""
-        amount = txn.get("amount", 0)
+        amount = abs(txn.get("amount", 0))
+        signed = amount if txn.get("isCredit") else -amount
         acct = txn.get("accountName", "")
-        pending = " (pending)" if txn.get("isPending") else ""
-        sign = "+" if amount > 0 else ""
-        lines.append(f"{date}  {sign}${amount:,.2f}  {desc}  [{acct}]{pending}")
+        cat = txn.get("categoryName") or ""
+        flags = ""
+        if txn.get("isPending"):
+            flags += " (pending)"
+        if txn.get("isDuplicate"):
+            flags += " (duplicate)"
+        cat_part = f"  ({cat})" if cat else ""
+        lines.append(
+            f"{date}  {signed:>12,.2f}  {desc}  [{acct}]{cat_part}{flags}"
+        )
 
-    if len(txns) > 100:
-        lines.append(f"\n(showing 100 of {len(txns)} transactions)")
+    remaining = matched - (offset + len(page))
+    if remaining > 0:
+        lines.append(
+            f"\n{remaining} more. Re-run with offset={offset + len(page)} to continue."
+        )
 
     return "\n".join(lines)
+
+
+def _range_label(days: int, start_date: str, end_date: str) -> str:
+    """Human-readable description of the window that was queried."""
+    if start_date:
+        return f"{start_date} to {end_date or 'today'}"
+    if end_date:
+        return f"{days} days ending {end_date}"
+    return f"last {days} days"
 
 
 @mcp.tool()
