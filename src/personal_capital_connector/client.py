@@ -16,6 +16,14 @@ def _safe_float(value) -> float | None:
         return None
 
 
+def _parse_date(value: str, field: str) -> datetime:
+    """Parse an ISO date (YYYY-MM-DD), raising a clear error on bad input."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be an ISO date (YYYY-MM-DD), got: {value!r}")
+
+
 def _extract_last4(original_name: str | None) -> str | None:
     """Extract last 4 digits from originalName like '... Ending in 7783'."""
     if not original_name:
@@ -38,10 +46,34 @@ class PersonalCapitalAPI:
             raise RuntimeError(f"getAccounts failed: {data.get('spHeader', {}).get('errors', [])}")
         return data.get("spData", {})
 
-    def get_transactions(self, days: int = 30) -> list:
-        """Fetch transactions for the past `days` days."""
-        end = datetime.now()
-        start = end - timedelta(days=days)
+    def get_transactions(
+        self,
+        days: int = 30,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list:
+        """
+        Fetch transactions for an explicit date range, or for the past `days` days.
+
+        start_date and end_date are ISO dates (YYYY-MM-DD). Setting start_date
+        ignores `days`. Setting only start_date runs through today. Setting only
+        end_date looks back `days` from that date.
+        """
+        if start_date:
+            start = _parse_date(start_date, "start_date")
+            end = _parse_date(end_date, "end_date") if end_date else datetime.now()
+        elif end_date:
+            end = _parse_date(end_date, "end_date")
+            start = end - timedelta(days=days)
+        else:
+            end = datetime.now()
+            start = end - timedelta(days=days)
+
+        if start > end:
+            raise ValueError(
+                f"start_date ({start:%Y-%m-%d}) is after end_date ({end:%Y-%m-%d})"
+            )
+
         response = self.pc.fetch(
             "/transaction/getUserTransactions",
             {
