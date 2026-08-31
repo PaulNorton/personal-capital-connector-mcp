@@ -131,14 +131,18 @@ def get_net_worth() -> str:
     categorized = categorize_accounts(data, hide_zero_balance=False)
     groups = categorized["accounts"]
 
+    # Empower signs both sides positive: an asset balance and an amount owed are
+    # both reported as positive numbers. Do not coerce the sign here — a credit
+    # card carrying a credit, or an overdrawn checking account, legitimately comes
+    # back negative and has to net against its own side of the balance sheet.
     total_assets = sum(
         a["balance"]
         for grp in ("cash", "investment", "other")
         for a in groups[grp]
-        if a.get("is_asset", True) and a["balance"] > 0
+        if a.get("is_asset", True)
     )
     total_liabilities = sum(
-        abs(a["balance"])
+        a["balance"]
         for grp in ("credit", "loan")
         for a in groups[grp]
     )
