@@ -44,7 +44,7 @@ class PersonalCapitalAPI:
         data = response.json()
         if not data.get("spHeader", {}).get("success"):
             raise RuntimeError(f"getAccounts failed: {data.get('spHeader', {}).get('errors', [])}")
-        return data.get("spData", {})
+        return data.get("spData") or {}
 
     def get_transactions(
         self,
@@ -84,7 +84,7 @@ class PersonalCapitalAPI:
         data = response.json()
         if not data.get("spHeader", {}).get("success"):
             raise RuntimeError(f"getTransactions failed: {data.get('spHeader', {}).get('errors', [])}")
-        return data.get("spData", {}).get("transactions", [])
+        return (data.get("spData") or {}).get("transactions") or []
 
     def get_holdings(self) -> list:
         """Fetch investment holdings from /invest/getHoldings."""
@@ -92,7 +92,7 @@ class PersonalCapitalAPI:
         data = response.json()
         if not data.get("spHeader", {}).get("success"):
             raise RuntimeError(f"getHoldings failed: {data.get('spHeader', {}).get('errors', [])}")
-        return data.get("spData", {}).get("holdings", [])
+        return (data.get("spData") or {}).get("holdings") or []
 
 
 # ---------------------------------------------------------------------------
@@ -104,10 +104,12 @@ def categorize_accounts(accounts_data: dict, hide_zero_balance: bool = False) ->
     Group accounts from spData into cash / credit / investment / loan / other.
     Returns a dict with 'networth', 'accounts' (grouped), and 'total_accounts'.
     Accounts with a closedDate are always excluded.
-    Zero-balance accounts are excluded when hide_zero_balance is True (default).
+    Zero-balance accounts are excluded when hide_zero_balance is True.
     """
-    accounts = accounts_data.get("accounts", [])
-    networth = accounts_data.get("networth", 0)
+    # These arrive as explicit nulls on a freshly linked profile, so a plain
+    # .get() default is not enough: callers iterate and format these directly.
+    accounts = accounts_data.get("accounts") or []
+    networth = accounts_data.get("networth") or 0
 
     groups: dict[str, list] = {
         "cash": [],
@@ -140,6 +142,11 @@ def categorize_accounts(accounts_data: dict, hide_zero_balance: bool = False) ->
             acct_type = acct.get("accountType") or ""
             display_name = f"{firm} {acct_type}".strip()
 
+        # An absent or null isAsset means "asset"; only an explicit false marks
+        # this as something owed. Getting this wrong moves the whole balance to
+        # the other side of the net worth summary.
+        is_asset = acct.get("isAsset")
+
         last4 = _extract_last4(acct.get("originalName"))
         if last4:
             display_name = f"{display_name} (…{last4})"
@@ -150,7 +157,7 @@ def categorize_accounts(accounts_data: dict, hide_zero_balance: bool = False) ->
             "type": acct.get("accountType", ""),
             "subtype": acct.get("accountTypeSubtype", ""),
             "balance": balance,
-            "is_asset": acct.get("isAsset", True),
+            "is_asset": True if is_asset is None else is_asset,
             "is_manual": acct.get("isManual", False),
             "currency": acct.get("currency", "USD"),
             "last_refreshed": acct.get("lastRefreshed", ""),
@@ -215,8 +222,8 @@ def summarize_holdings(holdings: list) -> dict:
         if account_name not in by_account:
             by_account[account_name] = []
         by_account[account_name].append({
-            "ticker": h.get("ticker", ""),
-            "description": h.get("description", ""),
+            "ticker": h.get("ticker") or "",
+            "description": h.get("description") or "",
             "shares": h.get("quantity", 0),
             "price": h.get("price", 0),
             "value": value,

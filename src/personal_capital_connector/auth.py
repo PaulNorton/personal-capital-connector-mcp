@@ -3,6 +3,7 @@
 import getpass
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -28,8 +29,15 @@ def load_session() -> Optional[tuple[dict, str]]:
 
 def save_session(session: dict, csrf: str) -> None:
     """Persist session cookies and CSRF token to disk (mode 600)."""
-    AUTH_DIR.mkdir(parents=True, exist_ok=True)
-    SESSION_FILE.write_text(json.dumps({"session": session, "csrf": csrf}, indent=2))
+    AUTH_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = json.dumps({"session": session, "csrf": csrf}, indent=2)
+    # Create the file already restricted rather than widening then narrowing it:
+    # write_text() would leave live session cookies world-readable until the
+    # chmod landed. O_CREAT's mode is ignored when the file already exists, so
+    # the chmod still has to run for the overwrite case.
+    fd = os.open(SESSION_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(payload)
     SESSION_FILE.chmod(0o600)
 
 

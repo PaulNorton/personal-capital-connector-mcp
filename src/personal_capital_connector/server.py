@@ -135,17 +135,19 @@ def get_net_worth() -> str:
     # both reported as positive numbers. Do not coerce the sign here — a credit
     # card carrying a credit, or an overdrawn checking account, legitimately comes
     # back negative and has to net against its own side of the balance sheet.
-    total_assets = sum(
-        a["balance"]
-        for grp in ("cash", "investment", "other")
-        for a in groups[grp]
-        if a.get("is_asset", True)
-    )
-    total_liabilities = sum(
-        a["balance"]
-        for grp in ("credit", "loan")
-        for a in groups[grp]
-    )
+    #
+    # Which side an account lands on is decided per account, not per group. The
+    # credit and loan groups are liabilities by construction; anywhere else, a
+    # false is_asset marks a liability (a manual mortgage, an escrow balance)
+    # that would otherwise be missing from both totals.
+    total_assets = 0.0
+    total_liabilities = 0.0
+    for grp, accts in groups.items():
+        for a in accts:
+            if grp in ("credit", "loan") or not a.get("is_asset", True):
+                total_liabilities += a["balance"]
+            else:
+                total_assets += a["balance"]
 
     lines = [
         "Net Worth Summary",
@@ -243,24 +245,23 @@ def get_transactions(
         txns = [t for t in txns if needle in (t.get("categoryName") or "").lower()]
 
     if min_amount > 0:
-        txns = [t for t in txns if abs(t.get("amount", 0)) >= min_amount]
+        txns = [t for t in txns if abs(_amount(t)) >= min_amount]
     if max_amount > 0:
-        txns = [t for t in txns if abs(t.get("amount", 0)) <= max_amount]
+        txns = [t for t in txns if abs(_amount(t)) <= max_amount]
 
     if not txns:
         return f"No transactions found. ({_range_label(days, start_date, end_date)})"
 
-    txns.sort(key=lambda x: x.get("transactionDate", ""), reverse=not oldest_first)
+    txns.sort(key=lambda x: x.get("transactionDate") or "", reverse=not oldest_first)
 
     matched = len(txns)
+    offset = max(offset, 0)
     page = txns[offset:offset + limit] if limit > 0 else txns[offset:]
 
-    money_in = sum(
-        t.get("amount", 0) for t in txns if t.get("isCredit")
-    )
-    money_out = sum(
-        t.get("amount", 0) for t in txns if not t.get("isCredit")
-    )
+    # Magnitude from the amount, direction from isCredit — the same rule the rows
+    # below use, so the header total always equals the sum of what is displayed.
+    money_in = sum(abs(_amount(t)) for t in txns if t.get("isCredit"))
+    money_out = sum(abs(_amount(t)) for t in txns if not t.get("isCredit"))
 
     header = f"Transactions — {_range_label(days, start_date, end_date)}"
     lines = [header]
@@ -280,9 +281,9 @@ def get_transactions(
     for txn in page:
         date = (txn.get("transactionDate") or "")[:10]
         desc = txn.get("description") or txn.get("originalDescription") or ""
-        amount = abs(txn.get("amount", 0))
+        amount = abs(_amount(txn))
         signed = amount if txn.get("isCredit") else -amount
-        acct = txn.get("accountName", "")
+        acct = txn.get("accountName") or ""
         cat = txn.get("categoryName") or ""
         flags = ""
         if txn.get("isPending"):
@@ -301,6 +302,11 @@ def get_transactions(
         )
 
     return "\n".join(lines)
+
+
+def _amount(txn: dict) -> float:
+    """A transaction's amount. Pending rows can carry a null, which reads as 0."""
+    return txn.get("amount") or 0.0
 
 
 def _range_label(days: int, start_date: str, end_date: str) -> str:
