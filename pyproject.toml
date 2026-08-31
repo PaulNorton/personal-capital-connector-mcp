@@ -16,6 +16,15 @@ dependencies = [
 [project.scripts]
 personal-capital-connector = "personal_capital_connector.cli:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
