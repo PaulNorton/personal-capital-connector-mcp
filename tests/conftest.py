@@ -79,14 +79,19 @@ def txn(**overrides) -> dict:
 
 
 def holding(**overrides) -> dict:
-    """Build a raw Empower holding dict."""
+    """Build a raw Empower holding dict.
+
+    Mirrors the live /invest/getHoldings shape: there is no assetClass field.
+    Empower ships an empty 'classifications' table instead, so allocation is
+    grouped by the holding's own description.
+    """
     base = {
         "ticker": "VTI",
         "description": "Vanguard Total Stock Market ETF",
         "quantity": 10,
         "price": 100.0,
         "value": 1000.0,
-        "assetClass": "US Stocks",
+        "holdingType": "Fund",
         "accountName": "Brokerage",
     }
     base.update(overrides)
@@ -148,8 +153,10 @@ class FakeAPI:
         self._transactions = transactions or []
         self._holdings = holdings or []
         self.transaction_calls = []
+        self.account_calls = 0
 
     def get_accounts(self):
+        self.account_calls += 1
         return self._accounts
 
     def get_transactions(self, days=30, start_date=None, end_date=None):

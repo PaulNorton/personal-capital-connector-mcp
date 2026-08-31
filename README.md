@@ -20,7 +20,7 @@ personal-capital-connector/
 | `list_accounts` | "What's my Chase credit card balance?" / "Show my savings accounts" |
 | `get_net_worth` | "What's my net worth?" / "How much do I owe vs own?" |
 | `get_transactions` | "What did I spend at restaurants last month?" |
-| `get_asset_allocation` | "What's my asset allocation in my 401k?" |
+| `get_asset_allocation` | "What am I holding in my 401k?" / "Which funds am I most concentrated in?" |
 | `check_auth_status` | "Is my Empower session still valid?" |
 
 ### `get_transactions` parameters

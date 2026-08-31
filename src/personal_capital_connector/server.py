@@ -6,7 +6,12 @@ from typing import Annotated, Literal, Optional
 from mcp.server.fastmcp import FastMCP
 
 from .auth import SESSION_FILE, create_authenticated_client
-from .client import PersonalCapitalAPI, categorize_accounts, summarize_holdings
+from .client import (
+    PersonalCapitalAPI,
+    account_name,
+    categorize_accounts,
+    summarize_holdings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +323,44 @@ def _range_label(days: int, start_date: str, end_date: str) -> str:
     return f"last {days} days"
 
 
+def _with_account_names(api: PersonalCapitalAPI, holdings: list) -> list:
+    """
+    Fill in accountName on holdings that carry only a userAccountId.
+
+    Empower omits accountName on some holdings (cash sweep rows in particular),
+    which would otherwise collect them all under a single "Unknown" account and
+    put them out of reach of account_filter. Resolving costs one extra request,
+    so it is skipped when every holding already names its account.
+    """
+    if all(h.get("accountName") for h in holdings):
+        return holdings
+
+    try:
+        accounts = api.get_accounts().get("accounts") or []
+    except Exception as e:
+        # The names are an enrichment; a failure here should not sink the tool.
+        logger.warning("Could not resolve account names for holdings: %s", e)
+        return holdings
+
+    # Deliberately the undecorated name, without the "(…1234)" suffix that
+    # list_accounts adds: it has to match the names the holdings feed supplies
+    # for the same account, or one account renders as two buckets.
+    names = {
+        str(a["userAccountId"]): account_name(a)
+        for a in accounts
+        if a.get("userAccountId") is not None and account_name(a)
+    }
+
+    resolved = []
+    for h in holdings:
+        if not h.get("accountName"):
+            name = names.get(str(h.get("userAccountId")))
+            if name:
+                h = {**h, "accountName": name}
+        resolved.append(h)
+    return resolved
+
+
 @mcp.tool()
 def get_asset_allocation(
     account_filter: Annotated[
@@ -326,13 +369,17 @@ def get_asset_allocation(
     ] = "",
 ) -> str:
     """
-    Show investment holdings and asset allocation breakdown.
-    Displays allocation by asset class (US Stocks, International Stocks, Bonds, etc.)
-    with dollar values and percentages, then lists holdings per account.
+    Show investment holdings and how the portfolio is spread across them.
+
+    Empower's holdings feed carries no asset class, so this breaks down by
+    individual holding (fund or security) with dollar values and percentages,
+    then lists holdings per account. It cannot report a stock/bond/international
+    split: funds are not decomposed into their components.
+
     Use account_filter to focus on retirement accounts, a specific brokerage, etc.
     """
     api = _get_api()
-    holdings = api.get_holdings()
+    holdings = _with_account_names(api, api.get_holdings())
 
     if account_filter:
         filter_lower = account_filter.lower()
@@ -353,13 +400,15 @@ def get_asset_allocation(
     lines = [
         f"Investment Holdings — ${total:,.2f} total",
         "",
-        "Asset Allocation:",
+        "Allocation by holding:",
     ]
 
-    for asset_class, info in summary["allocation"].items():
+    for name, info in summary["allocation"].items():
         bar = "█" * int(info["pct"] / 2)
+        # Fund names run long; keep the value column aligned.
+        label = name if len(name) <= 40 else name[:39] + "…"
         lines.append(
-            f"  {asset_class:<30} ${info['value']:>12,.2f}  {info['pct']:5.1f}%  {bar}"
+            f"  {label:<40} ${info['value']:>12,.2f}  {info['pct']:5.1f}%  {bar}"
         )
 
     lines.append("")
@@ -371,8 +420,9 @@ def get_asset_allocation(
 
         for h in sorted(acct_holdings, key=lambda x: -x["value"])[:25]:
             ticker = f"[{h['ticker']}] " if h["ticker"] else ""
+            kind = f" ({h['holding_type']})" if h["holding_type"] else ""
             lines.append(
-                f"    • {ticker}{h['description']}: ${h['value']:,.2f} ({h['asset_class']})"
+                f"    • {ticker}{h['description']}: ${h['value']:,.2f}{kind}"
             )
 
     return "\n".join(lines)

@@ -24,6 +24,16 @@ def _parse_date(value: str, field: str) -> datetime:
         raise ValueError(f"{field} must be an ISO date (YYYY-MM-DD), got: {value!r}")
 
 
+def account_name(acct: dict) -> str:
+    """Human-readable account name: the user-assigned name, else firm + type."""
+    name = acct.get("name") or ""
+    if not name:
+        firm = acct.get("firmName") or ""
+        acct_type = acct.get("accountType") or ""
+        name = f"{firm} {acct_type}".strip()
+    return name
+
+
 def _extract_last4(original_name: str | None) -> str | None:
     """Extract last 4 digits from originalName like '... Ending in 7783'."""
     if not original_name:
@@ -134,13 +144,7 @@ def categorize_accounts(accounts_data: dict, hide_zero_balance: bool = False) ->
         grp = (acct.get("accountTypeGroup") or "").upper()
         prod = (acct.get("productType") or "").upper()
 
-        # Build a human-readable name: prefer the user-assigned 'name' field,
-        # fall back to firmName + accountType.
-        display_name = acct.get("name") or ""
-        if not display_name:
-            firm = acct.get("firmName") or ""
-            acct_type = acct.get("accountType") or ""
-            display_name = f"{firm} {acct_type}".strip()
+        display_name = account_name(acct)
 
         # An absent or null isAsset means "asset"; only an explicit false marks
         # this as something owed. Getting this wrong moves the whole balance to
@@ -198,44 +202,50 @@ def categorize_accounts(accounts_data: dict, hide_zero_balance: bool = False) ->
 
 def summarize_holdings(holdings: list) -> dict:
     """
-    Compute asset class allocation and per-account holdings breakdown.
+    Compute per-holding allocation and per-account holdings breakdown.
+
+    Empower's holdings feed carries no asset class. The endpoint ships a
+    'classifications' table alongside the holdings that would presumably hold
+    one, but it comes back empty, and every holding reports the same
+    holdingType, so a true stock/bond/international split is not available
+    here. Allocation is therefore grouped by the holding itself.
 
     Returns:
         {
             "total_value": float,
-            "allocation": {asset_class: {"value": float, "pct": float}},
+            "allocation": {holding_name: {"value": float, "pct": float}},
             "by_account": {account_name: [holding_dict, ...]},
         }
     """
-    asset_classes: dict[str, float] = {}
+    by_holding: dict[str, float] = {}
     by_account: dict[str, list] = {}
     total_value = 0.0
 
     for h in holdings:
         value = h.get("value", 0) or 0
-        asset_class = h.get("assetClass", "Unknown") or "Unknown"
-        account_name = h.get("accountName", "Unknown") or "Unknown"
+        name = h.get("description") or h.get("ticker") or "Unknown"
+        acct = h.get("accountName", "Unknown") or "Unknown"
 
         total_value += value
-        asset_classes[asset_class] = asset_classes.get(asset_class, 0) + value
+        by_holding[name] = by_holding.get(name, 0) + value
 
-        if account_name not in by_account:
-            by_account[account_name] = []
-        by_account[account_name].append({
+        if acct not in by_account:
+            by_account[acct] = []
+        by_account[acct].append({
             "ticker": h.get("ticker") or "",
             "description": h.get("description") or "",
             "shares": h.get("quantity", 0),
             "price": h.get("price", 0),
             "value": value,
-            "asset_class": asset_class,
+            "holding_type": h.get("holdingType") or "",
         })
 
     allocation = {
-        ac: {
+        name: {
             "value": v,
             "pct": (v / total_value * 100) if total_value else 0,
         }
-        for ac, v in sorted(asset_classes.items(), key=lambda x: -x[1])
+        for name, v in sorted(by_holding.items(), key=lambda x: -x[1])
     }
 
     return {
