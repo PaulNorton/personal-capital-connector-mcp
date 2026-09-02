@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "MCP connector for Personal Capital / Empower financial data"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp[cli]>=1.0.0",
+    "mcp[cli]>=1.28,<2",
     "personalcapital @ git+https://github.com/PaulNorton/personalcapital.git",
     "requests>=2.28",
 ]
