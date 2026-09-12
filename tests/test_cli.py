@@ -36,8 +36,13 @@ def record_auth(monkeypatch):
     """Capture the arguments cli.main() hands to interactive_auth."""
     seen = {}
 
-    def fake(email="", two_factor_mode="", remember=True):
-        seen.update(email=email, two_factor_mode=two_factor_mode, remember=remember)
+    def fake(email="", two_factor_mode="", remember=True, accept_defaults=False):
+        seen.update(
+            email=email,
+            two_factor_mode=two_factor_mode,
+            remember=remember,
+            accept_defaults=accept_defaults,
+        )
 
     monkeypatch.setattr(auth_module, "interactive_auth", fake)
     return seen
@@ -108,8 +113,23 @@ class TestAuth:
         cli_module.main()
         assert record_auth["remember"] is False
 
+    def test_defaults_are_not_auto_accepted(self, argv, capsys, record_auth):
+        argv("auth")
+        cli_module.main()
+        assert record_auth["accept_defaults"] is False
+
+    def test_accept_defaults_flag_is_passed_through(self, argv, capsys, record_auth):
+        argv("auth", "--accept-defaults")
+        cli_module.main()
+        assert record_auth["accept_defaults"] is True
+
+    def test_dash_y_is_the_same_flag(self, argv, capsys, record_auth):
+        argv("auth", "-y")
+        cli_module.main()
+        assert record_auth["accept_defaults"] is True
+
     def test_failure_exits_nonzero_with_the_reason(self, argv, capsys, monkeypatch):
-        def boom(email="", two_factor_mode="", remember=True):
+        def boom(email="", two_factor_mode="", remember=True, accept_defaults=False):
             raise RuntimeError("bad 2FA code")
 
         monkeypatch.setattr(auth_module, "interactive_auth", boom)
@@ -120,7 +140,7 @@ class TestAuth:
         assert "Authentication failed: bad 2FA code" in capsys.readouterr().out
 
     def test_ctrl_c_exits_nonzero_without_a_traceback(self, argv, capsys, monkeypatch):
-        def cancel(email="", two_factor_mode="", remember=True):
+        def cancel(email="", two_factor_mode="", remember=True, accept_defaults=False):
             raise KeyboardInterrupt
 
         monkeypatch.setattr(auth_module, "interactive_auth", cancel)

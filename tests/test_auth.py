@@ -511,6 +511,76 @@ class TestInteractiveAuthPreferences:
         auth_module.interactive_auth(remember=False)
         assert auth_module.load_prefs() == {"email": "paul@example.com"}
 
+    def test_accept_defaults_uses_the_saved_email_without_asking(self, login_flow, answers):
+        pc = login_flow()
+        auth_module.save_prefs({"email": "paul@example.com"})
+        answers()  # any prompt would fail: nothing is scripted
+        auth_module.interactive_auth(accept_defaults=True)
+        assert pc.login_args == ("paul@example.com", "hunter2")
+
+    def test_accept_defaults_echoes_the_email_it_used(self, login_flow, answers, capsys):
+        login_flow()
+        auth_module.save_prefs({"email": "paul@example.com"})
+        answers()
+        auth_module.interactive_auth(accept_defaults=True)
+        assert "Empower email: paul@example.com (saved)" in capsys.readouterr().out
+
+    def test_accept_defaults_uses_the_saved_two_factor_mode(self, login_flow, answers):
+        pc = login_flow(needs_two_factor=True)
+        auth_module.save_prefs({"email": "paul@example.com", "two_factor_mode": "email"})
+        answers("123456")  # only the 2FA code is asked for
+        auth_module.interactive_auth(accept_defaults=True)
+        assert pc.challenged == auth_module.TwoFactorVerificationModeEnum.EMAIL
+
+    def test_accept_defaults_says_which_two_factor_mode_it_used(
+        self, login_flow, answers, capsys
+    ):
+        login_flow(needs_two_factor=True)
+        auth_module.save_prefs({"email": "paul@example.com", "two_factor_mode": "email"})
+        answers("123456")
+        auth_module.interactive_auth(accept_defaults=True)
+        assert "Using your saved choice: email." in capsys.readouterr().out
+
+    def test_accept_defaults_keeps_what_it_accepted(self, login_flow, answers):
+        login_flow(needs_two_factor=True)
+        saved = {"email": "paul@example.com", "two_factor_mode": "email"}
+        auth_module.save_prefs(saved)
+        answers("123456")
+        auth_module.interactive_auth(accept_defaults=True)
+        assert auth_module.load_prefs() == saved
+
+    def test_accept_defaults_still_asks_for_an_unsaved_email(self, login_flow, answers, capsys):
+        pc = login_flow()
+        answers("paul@example.com")
+        auth_module.interactive_auth(accept_defaults=True)
+        assert pc.login_args == ("paul@example.com", "hunter2")
+        assert "Nothing saved to accept yet" in capsys.readouterr().out
+
+    def test_accept_defaults_still_asks_for_an_unsaved_two_factor_mode(
+        self, login_flow, answers
+    ):
+        pc = login_flow(needs_two_factor=True)
+        auth_module.save_prefs({"email": "paul@example.com"})
+        answers("2", "123456")
+        auth_module.interactive_auth(accept_defaults=True)
+        assert pc.challenged == auth_module.TwoFactorVerificationModeEnum.EMAIL
+
+    def test_an_argument_still_wins_over_the_saved_email(self, login_flow, answers):
+        pc = login_flow()
+        auth_module.save_prefs({"email": "saved@example.com"})
+        answers()
+        auth_module.interactive_auth(email="flag@example.com", accept_defaults=True)
+        assert pc.login_args == ("flag@example.com", "hunter2")
+
+    def test_no_remember_leaves_accept_defaults_nothing_to_accept(
+        self, login_flow, answers
+    ):
+        pc = login_flow()
+        auth_module.save_prefs({"email": "saved@example.com"})
+        answers("typed@example.com")
+        auth_module.interactive_auth(accept_defaults=True, remember=False)
+        assert pc.login_args == ("typed@example.com", "hunter2")
+
     def test_a_failed_login_saves_nothing(self, login_flow, answers, monkeypatch):
         login_flow()
         monkeypatch.setattr(auth_module, "create_authenticated_client", lambda: None)

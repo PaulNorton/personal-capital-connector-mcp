@@ -89,7 +89,15 @@ personal-capital-connector prefs --clear email          # forget one (email or 2
 personal-capital-connector prefs --clear                # forget both
 ```
 
-Clearing preferences never touches your session. To skip both prompts, run `auth --email you@email.com --2fa sms`; to log in without reading or writing preferences at all, add `--no-remember`.
+Clearing preferences never touches your session.
+
+Once your preferences are saved, `-y` takes them all without asking:
+
+```bash
+personal-capital-connector auth -y
+```
+
+That leaves only the password, and the 2FA code when one is needed. Anything with no saved value is still prompted for. `--email` and `--2fa` override a saved value for one run, and `--no-remember` logs in without reading or writing preferences at all.
 
 **Step 2 — Add to Claude Desktop's MCP settings** (e.g. `~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json

@@ -21,6 +21,12 @@ def main() -> None:
         help="How to receive the 2FA code, skipping that prompt",
     )
     auth_cmd.add_argument(
+        "-y",
+        "--accept-defaults",
+        action="store_true",
+        help="Take every saved preference without asking (still prompts for the password)",
+    )
+    auth_cmd.add_argument(
         "--no-remember",
         action="store_true",
         help="Ignore the saved preferences and save none this run",
@@ -58,6 +64,7 @@ def main() -> None:
                 email=args.email,
                 two_factor_mode=args.two_factor,
                 remember=not args.no_remember,
+                accept_defaults=args.accept_defaults,
             )
             print("\nAll done! Start the MCP server with: personal-capital-connector")
         except KeyboardInterrupt:

@@ -208,23 +208,35 @@ def create_authenticated_client() -> Optional[PersonalCapital]:
 
 
 def interactive_auth(
-    email: str = "", two_factor_mode: str = "", remember: bool = True
+    email: str = "",
+    two_factor_mode: str = "",
+    remember: bool = True,
+    accept_defaults: bool = False,
 ) -> PersonalCapital:
     """
     Run the interactive authentication flow including 2FA.
 
     Prompts for whatever is not passed in, defaulting to the saved preferences.
     Saves the session, and the answers used, on success. With remember=False the
-    saved preferences are neither read nor written.
+    saved preferences are neither read nor written. With accept_defaults=True
+    every saved answer is taken without asking; anything with no saved answer is
+    still prompted for, and the password and 2FA code always are.
     """
     prefs = load_prefs() if remember else {}
-    if prefs:
+    if prefs and not accept_defaults:
         print(f"Using saved preferences from {PREFS_FILE}.")
         print(f"Press Enter to accept a default, or type '{FORGET}' to forget it.\n")
+    if accept_defaults and not prefs:
+        print("Nothing saved to accept yet — asking for everything this time.\n")
 
     remember_email = remember
     if not email:
-        email, remember_email = prompt_with_default("Empower email", prefs.get("email"))
+        saved_email = prefs.get("email")
+        if accept_defaults and saved_email:
+            email = saved_email
+            print(f"Empower email: {email} (saved)")
+        else:
+            email, remember_email = prompt_with_default("Empower email", saved_email)
     password = getpass.getpass("Empower password: ")
 
     if not email or not password:
@@ -239,10 +251,14 @@ def interactive_auth(
         pc.login(email, password)
         print("✓ Logged in (no 2FA required)")
     except RequireTwoFactorException:
+        saved_mode = prefs.get("two_factor_mode")
         if two_factor_mode:
             used_mode = two_factor_mode
+        elif accept_defaults and saved_mode:
+            used_mode = saved_mode
+            print(f"\n2FA required. Using your saved choice: {used_mode}.")
         else:
-            used_mode, remember_mode = prompt_two_factor_mode(prefs.get("two_factor_mode"))
+            used_mode, remember_mode = prompt_two_factor_mode(saved_mode)
 
         if used_mode == "email":
             mode = TwoFactorVerificationModeEnum.EMAIL
