@@ -7,7 +7,7 @@ personal-capital-connector/
 └── src/personal_capital_connector/
     ├── __init__.py
     ├── __main__.py
-    ├── auth.py      # session persistence + 2FA flow
+    ├── auth.py      # session + preference persistence, 2FA flow
     ├── client.py    # API wrapper + data formatters
     ├── server.py    # FastMCP server with 5 tools
     └── cli.py       # CLI entry point
@@ -61,6 +61,35 @@ Install uv: https://docs.astral.sh/uv/
 uv run --directory {full path to this directory} personal-capital-connector auth
 ```
 Your session is saved to `~/.config/personal-capital-connector/session.json` (chmod 600). Re-run this any time your session expires.
+
+Your email and 2FA choice are saved next to it in `prefs.json`, so the next login is two keystrokes:
+
+```
+Using saved preferences from ~/.config/personal-capital-connector/prefs.json.
+Press Enter to accept a default, or type '-' to forget it.
+
+Empower email [paul@example.com]:
+Empower password:
+
+2FA required. How do you want to receive the code?
+  1) SMS
+  2) Email
+Choice [2, saved]:
+```
+
+Press Enter to accept a default, type a new value to replace it, or type `-` to forget it — the answer you give after `-` is used for that login but not saved.
+
+Manage the same preferences without logging in:
+
+```bash
+personal-capital-connector prefs                        # show what is saved
+personal-capital-connector prefs --email you@email.com  # change the email
+personal-capital-connector prefs --2fa sms              # change the 2FA method
+personal-capital-connector prefs --clear email          # forget one (email or 2fa)
+personal-capital-connector prefs --clear                # forget both
+```
+
+Clearing preferences never touches your session. To skip both prompts, run `auth --email you@email.com --2fa sms`; to log in without reading or writing preferences at all, add `--no-remember`.
 
 **Step 2 — Add to Claude Desktop's MCP settings** (e.g. `~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json

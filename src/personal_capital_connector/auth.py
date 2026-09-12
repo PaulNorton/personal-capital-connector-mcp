@@ -1,4 +1,4 @@
-"""Session persistence and interactive authentication for Personal Capital."""
+"""Session persistence, login preferences, and interactive authentication."""
 
 import getpass
 import json
@@ -13,6 +13,26 @@ logger = logging.getLogger(__name__)
 
 AUTH_DIR = Path.home() / ".config" / "personal-capital-connector"
 SESSION_FILE = AUTH_DIR / "session.json"
+PREFS_FILE = AUTH_DIR / "prefs.json"
+
+# Delivery methods Empower can send a 2FA code through, in prompt order.
+TWO_FACTOR_MODES = ("sms", "email")
+
+# Typed at any prompt to forget the saved answer behind it.
+FORGET = "-"
+
+
+def _write_private(path: Path, payload: str) -> None:
+    """Write payload to path, readable only by the owner."""
+    AUTH_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Create the file already restricted rather than widening then narrowing it:
+    # write_text() would leave live session cookies world-readable until the
+    # chmod landed. O_CREAT's mode is ignored when the file already exists, so
+    # the chmod still has to run for the overwrite case.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(payload)
+    path.chmod(0o600)
 
 
 def load_session() -> Optional[tuple[dict, str]]:
@@ -29,22 +49,135 @@ def load_session() -> Optional[tuple[dict, str]]:
 
 def save_session(session: dict, csrf: str) -> None:
     """Persist session cookies and CSRF token to disk (mode 600)."""
-    AUTH_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-    payload = json.dumps({"session": session, "csrf": csrf}, indent=2)
-    # Create the file already restricted rather than widening then narrowing it:
-    # write_text() would leave live session cookies world-readable until the
-    # chmod landed. O_CREAT's mode is ignored when the file already exists, so
-    # the chmod still has to run for the overwrite case.
-    fd = os.open(SESSION_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        fh.write(payload)
-    SESSION_FILE.chmod(0o600)
+    _write_private(SESSION_FILE, json.dumps({"session": session, "csrf": csrf}, indent=2))
 
 
 def clear_session() -> None:
     """Remove the saved session file."""
     if SESSION_FILE.exists():
         SESSION_FILE.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Login preferences
+# ---------------------------------------------------------------------------
+
+def load_prefs() -> dict:
+    """Load saved login preferences. Unknown or invalid fields are dropped."""
+    if not PREFS_FILE.exists():
+        return {}
+    try:
+        data = json.loads(PREFS_FILE.read_text())
+    except Exception as e:
+        logger.warning("Failed to load preferences: %s", e)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    prefs = {}
+    email = data.get("email")
+    if isinstance(email, str) and email.strip():
+        prefs["email"] = email.strip()
+    mode = data.get("two_factor_mode")
+    if isinstance(mode, str) and mode.strip().lower() in TWO_FACTOR_MODES:
+        prefs["two_factor_mode"] = mode.strip().lower()
+    return prefs
+
+
+def save_prefs(prefs: dict) -> None:
+    """Persist login preferences (mode 600). An empty dict removes the file."""
+    if not prefs:
+        clear_prefs()
+        return
+    _write_private(PREFS_FILE, json.dumps(prefs, indent=2))
+
+
+def update_prefs(**changes) -> dict:
+    """Merge changes into the saved preferences. A None value forgets a field."""
+    prefs = load_prefs()
+    for field, value in changes.items():
+        if value is None:
+            prefs.pop(field, None)
+        else:
+            prefs[field] = value
+    save_prefs(prefs)
+    return prefs
+
+
+def clear_prefs() -> None:
+    """Remove the saved preferences file. Leaves the session alone."""
+    if PREFS_FILE.exists():
+        PREFS_FILE.unlink()
+
+
+def format_prefs(prefs: dict) -> str:
+    """Render preferences for the `prefs` command, with how to change them."""
+    if not prefs:
+        return (
+            "No saved login preferences.\n"
+            "They are saved when you run: personal-capital-connector auth"
+        )
+    lines = [
+        f"Saved login preferences ({PREFS_FILE}):",
+        f"  email      {prefs.get('email', '—')}",
+        f"  2FA code   {prefs.get('two_factor_mode', '—')}",
+        "",
+        "Change:  personal-capital-connector prefs --email you@example.com --2fa sms",
+        "Forget:  personal-capital-connector prefs --clear",
+    ]
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
+
+def prompt_with_default(label: str, saved: Optional[str]) -> tuple[str, bool]:
+    """
+    Ask for a value, offering `saved` as the default.
+
+    Enter keeps the default. Typing FORGET drops it and asks again, and the
+    answer given after that is used but not saved. Returns (value, remember).
+    """
+    remember = True
+    while True:
+        answer = input(f"{label}{f' [{saved}]' if saved else ''}: ").strip()
+        if answer == FORGET:
+            if saved:
+                print(f"  Forgot the saved {label.lower()}.")
+            saved = None
+            remember = False
+            continue
+        if not answer:
+            if saved:
+                return saved, remember
+            print(f"  {label} is required.")
+            continue
+        return answer, remember
+
+
+def prompt_two_factor_mode(saved: Optional[str]) -> tuple[str, bool]:
+    """Ask how to receive the 2FA code. Returns (mode, remember)."""
+    print("\n2FA required. How do you want to receive the code?")
+    print("  1) SMS")
+    print("  2) Email")
+    numbers = {"sms": "1", "email": "2"}
+    remember = True
+    while True:
+        default = numbers.get(saved, "1")
+        hint = f"[{default}, saved]" if saved else f"[{default}]"
+        answer = input(f"Choice {hint}: ").strip().lower() or default
+        if answer == FORGET:
+            if saved:
+                print("  Forgot the saved 2FA choice.")
+            saved = None
+            remember = False
+            continue
+        if answer in ("1", "sms"):
+            return "sms", remember
+        if answer in ("2", "email"):
+            return "email", remember
+        print("  Enter 1 or 2.")
 
 
 def create_authenticated_client() -> Optional[PersonalCapital]:
@@ -74,30 +207,44 @@ def create_authenticated_client() -> Optional[PersonalCapital]:
         return None
 
 
-def interactive_auth(email: str = "") -> PersonalCapital:
+def interactive_auth(
+    email: str = "", two_factor_mode: str = "", remember: bool = True
+) -> PersonalCapital:
     """
     Run the interactive authentication flow including 2FA.
-    Prompts for credentials if not provided. Saves the session on success.
+
+    Prompts for whatever is not passed in, defaulting to the saved preferences.
+    Saves the session, and the answers used, on success. With remember=False the
+    saved preferences are neither read nor written.
     """
+    prefs = load_prefs() if remember else {}
+    if prefs:
+        print(f"Using saved preferences from {PREFS_FILE}.")
+        print(f"Press Enter to accept a default, or type '{FORGET}' to forget it.\n")
+
+    remember_email = remember
     if not email:
-        email = input("Empower email: ").strip()
+        email, remember_email = prompt_with_default("Empower email", prefs.get("email"))
     password = getpass.getpass("Empower password: ")
 
     if not email or not password:
         raise ValueError("Email and password are required.")
 
     pc = PersonalCapital()
+    # Stays None when 2FA never happens, so an unused preference is left alone.
+    used_mode = None
+    remember_mode = remember
 
     try:
         pc.login(email, password)
         print("✓ Logged in (no 2FA required)")
     except RequireTwoFactorException:
-        print("\n2FA required. How do you want to receive the code?")
-        print("  1) SMS")
-        print("  2) Email")
-        choice = input("Choice [1]: ").strip() or "1"
+        if two_factor_mode:
+            used_mode = two_factor_mode
+        else:
+            used_mode, remember_mode = prompt_two_factor_mode(prefs.get("two_factor_mode"))
 
-        if choice == "2":
+        if used_mode == "email":
             mode = TwoFactorVerificationModeEnum.EMAIL
             label = "email"
         else:
@@ -128,4 +275,13 @@ def interactive_auth(email: str = "") -> PersonalCapital:
         clear_session()
         raise RuntimeError("Session was saved but validation failed — please try again.")
     print("✓ Session validated successfully")
+
+    if remember:
+        changes = {"email": email if remember_email else None}
+        if used_mode is not None:
+            changes["two_factor_mode"] = used_mode if remember_mode else None
+        if update_prefs(**changes):
+            print(f"✓ Preferences saved to {PREFS_FILE}")
+        else:
+            print("✓ No preferences kept.")
     return pc
