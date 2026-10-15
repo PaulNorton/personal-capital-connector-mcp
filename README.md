@@ -9,16 +9,17 @@ personal-capital-connector/
     ├── __main__.py
     ├── auth.py      # session + preference persistence, 2FA flow
     ├── client.py    # API wrapper + data formatters
-    ├── server.py    # FastMCP server with 5 tools
+    ├── server.py    # FastMCP server with 6 tools
     └── cli.py       # CLI entry point
 ```
 
-### 5 tools exposed to Claude
+### 6 tools exposed to Claude
 
 | Tool | What it answers |
 |------|----------------|
 | `list_accounts` | "What's my Chase credit card balance?" / "Show my savings accounts" |
 | `get_net_worth` | "What's my net worth?" / "How much do I owe vs own?" |
+| `get_net_worth_history` | "How has my net worth changed since 2019?" (month-end or daily totals) |
 | `get_transactions` | "What did I spend at restaurants last month?" |
 | `get_asset_allocation` | "What am I holding in my 401k?" / "Which funds am I most concentrated in?" |
 | `check_auth_status` | "Is my Empower session still valid?" |

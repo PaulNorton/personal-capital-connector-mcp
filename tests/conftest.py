@@ -148,10 +148,12 @@ def fail(errors=None, **header) -> dict:
 class FakeAPI:
     """Stands in for PersonalCapitalAPI so tool functions run without network."""
 
-    def __init__(self, accounts=None, transactions=None, holdings=None):
+    def __init__(self, accounts=None, transactions=None, holdings=None, history=None):
         self._accounts = accounts if accounts is not None else accounts_payload()
         self._transactions = transactions or []
         self._holdings = holdings or []
+        self._history = history or []
+        self.history_calls = []
         self.transaction_calls = []
         self.account_calls = 0
 
@@ -167,6 +169,10 @@ class FakeAPI:
 
     def get_holdings(self):
         return list(self._holdings)
+
+    def get_net_worth_history(self, start_date=None, end_date=None):
+        self.history_calls.append({"start_date": start_date, "end_date": end_date})
+        return list(self._history)
 
 
 @pytest.fixture

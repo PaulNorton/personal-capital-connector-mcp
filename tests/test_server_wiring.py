@@ -86,6 +86,7 @@ class TestToolRegistration:
             "check_auth_status",
             "list_accounts",
             "get_net_worth",
+            "get_net_worth_history",
             "get_transactions",
             "get_asset_allocation",
         }

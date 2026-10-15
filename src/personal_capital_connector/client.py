@@ -5,6 +5,10 @@ from datetime import datetime, timedelta
 
 from personalcapital import PersonalCapital
 
+# Earlier than any account could have been linked: asking from here returns
+# the whole series.
+HISTORY_START = "2000-01-01"
+
 
 def _safe_float(value) -> float | None:
     """Convert a value to float, returning None if not possible."""
@@ -104,6 +108,48 @@ class PersonalCapitalAPI:
             raise RuntimeError(f"getHoldings failed: {data.get('spHeader', {}).get('errors', [])}")
         return (data.get("spData") or {}).get("holdings") or []
 
+    def get_net_worth_history(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list:
+        """
+        Fetch the daily net worth series from /account/getHistories.
+
+        Returns [{"date": "YYYY-MM-DD", "networth": float}, ...], oldest first.
+        start_date defaults to HISTORY_START, which predates any linked account;
+        end_date defaults to today. Empower answers with one row per day
+        whatever interval is asked for, so callers sample it themselves.
+        """
+        start = _parse_date(start_date or HISTORY_START, "start_date")
+        end = _parse_date(end_date, "end_date") if end_date else datetime.now()
+        if start > end:
+            raise ValueError(
+                f"start_date ({start:%Y-%m-%d}) is after end_date ({end:%Y-%m-%d})"
+            )
+
+        response = self.pc.fetch(
+            "/account/getHistories",
+            {
+                "startDate": start.strftime("%Y-%m-%d"),
+                "endDate": end.strftime("%Y-%m-%d"),
+                "interval": "DAY",
+                "types": '["networth"]',
+            },
+        )
+        data = response.json()
+        if not data.get("spHeader", {}).get("success"):
+            raise RuntimeError(f"getHistories failed: {data.get('spHeader', {}).get('errors', [])}")
+        rows = (data.get("spData") or {}).get("networthHistories") or []
+        return sorted(
+            (
+                {"date": r["date"], "networth": _safe_float(r.get("networth")) or 0.0}
+                for r in rows
+                if r.get("date")
+            ),
+            key=lambda r: r["date"],
+        )
+
 
 # ---------------------------------------------------------------------------
 # Formatting helpers (pure functions — no API calls)
@@ -198,6 +244,24 @@ def categorize_accounts(accounts_data: dict, hide_zero_balance: bool = False) ->
         "accounts": groups,
         "total_accounts": included,
     }
+
+
+def month_ends(history: list) -> list:
+    """
+    Keep the last row of each calendar month from a daily net worth series.
+
+    The current month's row is its latest day, not a true month end. Leading
+    zero rows are dropped: Empower reports $0 for every day before the first
+    account was linked, and those are missing data, not a net worth of zero.
+    """
+    by_month: dict[str, dict] = {}
+    started = False
+    for row in sorted(history, key=lambda r: r["date"]):
+        if not started and not row["networth"]:
+            continue
+        started = True
+        by_month[row["date"][:7]] = row
+    return list(by_month.values())
 
 
 def summarize_holdings(holdings: list) -> dict:

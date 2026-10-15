@@ -10,6 +10,7 @@ from .client import (
     PersonalCapitalAPI,
     account_name,
     categorize_accounts,
+    month_ends,
     summarize_holdings,
 )
 
@@ -175,6 +176,44 @@ def get_net_worth() -> str:
             total = sum(a["balance"] for a in accts)
             lines.append(f"  {label}: ${total:,.2f}")
 
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_net_worth_history(
+    start_date: Annotated[
+        str, "First date, YYYY-MM-DD. Blank means the start of the history."
+    ] = "",
+    end_date: Annotated[str, "Last date, YYYY-MM-DD. Blank means today."] = "",
+    interval: Annotated[
+        Literal["month", "day"],
+        "'month' gives each month's last day (default); 'day' gives every day.",
+    ] = "month",
+) -> str:
+    """
+    Net worth over time, as Empower records it: one total per date.
+
+    Empower keeps no assets/liabilities split for past dates, so each row is the
+    net worth alone. The series starts the day the first account was linked;
+    earlier days are omitted, not reported as $0. Empower's net worth covers
+    only the accounts linked to it, which can differ from a hand-built total.
+    In 'month' mode the current month shows its latest day.
+    """
+    api = _get_api()
+    history = api.get_net_worth_history(start_date or None, end_date or None)
+    rows = month_ends(history) if interval == "month" else [
+        r for r in history if r["networth"]
+    ]
+    if not rows:
+        return "No net worth history found for that range."
+
+    lines = [
+        f"Net Worth History — {rows[0]['date']} to {rows[-1]['date']} "
+        f"({len(rows)} {interval} rows)",
+        "",
+    ]
+    for r in rows:
+        lines.append(f"  {r['date']}  ${r['networth']:>15,.2f}")
     return "\n".join(lines)
 
 
