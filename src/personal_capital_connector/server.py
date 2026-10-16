@@ -1,6 +1,7 @@
 """FastMCP server exposing Personal Capital financial data as Claude tools."""
 
 import logging
+from datetime import datetime
 from typing import Annotated, Literal, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -8,6 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from .auth import SESSION_FILE, create_authenticated_client
 from .client import (
     PersonalCapitalAPI,
+    _extract_last4,
     account_name,
     categorize_accounts,
     month_ends,
@@ -214,6 +216,77 @@ def get_net_worth_history(
     ]
     for r in rows:
         lines.append(f"  {r['date']}  ${r['networth']:>15,.2f}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_account_balance_history(
+    account: Annotated[
+        str,
+        "Substring of the account name, e.g. 'mortgage' or '9380'. Blank means every account.",
+    ] = "",
+    start_date: Annotated[
+        str, "First date, YYYY-MM-DD. Blank means the start of the history."
+    ] = "",
+    end_date: Annotated[str, "Last date, YYYY-MM-DD. Blank means today."] = "",
+    interval: Annotated[
+        Literal["month", "day"],
+        "'month' gives each month's last day (default); 'day' gives every day.",
+    ] = "month",
+    include_closed: Annotated[
+        bool, "Include accounts closed in Empower. Default true."
+    ] = True,
+) -> str:
+    """
+    Balance over time for each account, as Empower records it.
+
+    Covers closed accounts too, so a past month can be rebuilt account by
+    account. Each account's series starts the day it was linked; earlier days
+    are omitted, not reported as $0. Liabilities show the amount owed as a
+    positive number. A trailing ~ marks a day Empower flags as approximate:
+    it had no real reading and carried a value forward.
+    """
+    api = _get_api()
+    accounts = (api.get_accounts() or {}).get("accounts") or []
+    wanted = []
+    for a in accounts:
+        if a.get("userAccountId") is None:
+            continue
+        if a.get("closedDate") and not include_closed:
+            continue
+        name = account_name(a)
+        last4 = _extract_last4(a.get("originalName"))
+        if last4:
+            name = f"{name} (…{last4})"
+        if account and account.lower() not in name.lower():
+            continue
+        wanted.append((a, name))
+    if not wanted:
+        return "No accounts match that filter."
+
+    history = api.get_account_balance_history(
+        [a["userAccountId"] for a, _ in wanted], start_date or None, end_date or None
+    )
+    lines = [
+        f"Account Balance History — {len(wanted)} accounts, {interval} rows",
+        "Liabilities show the amount owed. ~ marks a day Empower flags as approximate.",
+    ]
+    for a, name in wanted:
+        series = history.get(str(a["userAccountId"])) or []
+        rows = month_ends(series, "balance") if interval == "month" else [
+            r for r in series if r["balance"]
+        ]
+        side = "asset" if a.get("isAsset") is not False else "liability"
+        group = a.get("accountTypeGroup") or a.get("productType") or "OTHER"
+        created = a.get("createdDate")
+        linked = f"{datetime.fromtimestamp(created / 1000):%Y-%m-%d}" if created else "unknown"
+        status = f"closed {a['closedDate']}" if a.get("closedDate") else "open"
+        lines += ["", f"{name} — {group}, {side}, linked {linked}, {status}, id {a['userAccountId']}"]
+        if not rows:
+            lines.append("  No balance history in that range.")
+        for r in rows:
+            mark = " ~" if r["approximate"] else ""
+            lines.append(f"  {r['date']}  ${r['balance']:>15,.2f}{mark}")
     return "\n".join(lines)
 
 

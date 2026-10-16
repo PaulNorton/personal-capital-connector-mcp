@@ -150,6 +150,59 @@ class PersonalCapitalAPI:
             key=lambda r: r["date"],
         )
 
+    def get_account_balance_history(
+        self,
+        user_account_ids: list,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict:
+        """
+        Fetch each account's daily balance from /account/getHistories.
+
+        Returns {userAccountId (str): [{"date", "balance", "approximate"}, ...]},
+        oldest first. Closed accounts answer too. A day that does not list an
+        account is left out for that account. Empower flags a day it filled in
+        without a real reading with an "<id>Annotation" key; that day comes back
+        with approximate True. Liability balances are the amount owed, positive.
+        """
+        start = _parse_date(start_date or HISTORY_START, "start_date")
+        end = _parse_date(end_date, "end_date") if end_date else datetime.now()
+        if start > end:
+            raise ValueError(
+                f"start_date ({start:%Y-%m-%d}) is after end_date ({end:%Y-%m-%d})"
+            )
+        ids = [str(i) for i in user_account_ids]
+        if not ids:
+            return {}
+
+        response = self.pc.fetch(
+            "/account/getHistories",
+            {
+                "startDate": start.strftime("%Y-%m-%d"),
+                "endDate": end.strftime("%Y-%m-%d"),
+                "interval": "DAY",
+                "types": '["balances"]',
+                "userAccountIds": "[" + ",".join(ids) + "]",
+            },
+        )
+        data = response.json()
+        if not data.get("spHeader", {}).get("success"):
+            raise RuntimeError(f"getHistories failed: {data.get('spHeader', {}).get('errors', [])}")
+        days = (data.get("spData") or {}).get("histories") or []
+
+        out: dict[str, list] = {i: [] for i in ids}
+        for day in sorted((d for d in days if d.get("date")), key=lambda d: d["date"]):
+            balances = day.get("balances") or {}
+            for i in ids:
+                if i not in balances:
+                    continue
+                out[i].append({
+                    "date": day["date"],
+                    "balance": _safe_float(balances[i]) or 0.0,
+                    "approximate": f"{i}Annotation" in balances,
+                })
+        return out
+
 
 # ---------------------------------------------------------------------------
 # Formatting helpers (pure functions — no API calls)
@@ -246,18 +299,20 @@ def categorize_accounts(accounts_data: dict, hide_zero_balance: bool = False) ->
     }
 
 
-def month_ends(history: list) -> list:
+def month_ends(history: list, key: str = "networth") -> list:
     """
-    Keep the last row of each calendar month from a daily net worth series.
+    Keep the last row of each calendar month from a daily series.
 
     The current month's row is its latest day, not a true month end. Leading
-    zero rows are dropped: Empower reports $0 for every day before the first
-    account was linked, and those are missing data, not a net worth of zero.
+    zero rows are dropped: Empower reports $0 for every day before an account
+    was linked, and those are missing data, not a balance of zero. `key` names
+    the value field: "networth" for the net worth series, "balance" for one
+    account's series.
     """
     by_month: dict[str, dict] = {}
     started = False
     for row in sorted(history, key=lambda r: r["date"]):
-        if not started and not row["networth"]:
+        if not started and not row[key]:
             continue
         started = True
         by_month[row["date"][:7]] = row

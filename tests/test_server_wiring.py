@@ -87,6 +87,7 @@ class TestToolRegistration:
             "list_accounts",
             "get_net_worth",
             "get_net_worth_history",
+            "get_account_balance_history",
             "get_transactions",
             "get_asset_allocation",
         }
