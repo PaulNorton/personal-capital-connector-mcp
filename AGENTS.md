@@ -4,4 +4,6 @@ Instructions for any coding agent working in this repository. `CLAUDE.md` import
 
 See `README.md` for project overview and setup.
 
-<!-- Add project-specific instructions, constraints, and verification commands here. -->
+## Version Control
+- Commit and push directly to `main`. Do not open topic branches unless asked — this is a single-author repository with no PR review step.
+- Run the full test suite (`uv run pytest`) before pushing.
